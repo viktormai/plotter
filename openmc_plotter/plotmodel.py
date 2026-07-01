@@ -345,6 +345,8 @@ class PlotModel:
         self.sourceSitesVisible = True
         self.sourceSites = None
 
+        self._surface_crossing_data = None
+
         if model_path.is_file():
             settings_pkl = model_path.with_name('plot_settings.pkl')
         else:
@@ -1059,6 +1061,18 @@ class PlotModel:
 
         return image_data, None, data_min, data_max
 
+    def fetch_surface_crossings(self):
+    """Call openmc_compute_surface_crossings and return the data dict,
+    or None if unavailable. Does NOT re-run slice_data."""
+    try:
+        data = openmc.lib.plot.compute_surface_crossings()
+        self._surface_crossing_data = data
+        return data
+    except Exception as e:
+        print(f"Surface crossing fetch failed: {e}")
+        self._surface_crossing_data = None
+        return None
+
     @property
     def cell_ids(self):
         return self.geom_data[:, :, 0]
@@ -1294,6 +1308,9 @@ class PlotViewIndependent:
         self.tallyValue = "Mean"
         self.tallyContours = False
         self.tallyContourLevels = ""
+
+        # Parameter for surface crossing button
+        self.showSurfaceCrossings = False
 
     def __setstate__(self, state):
         """Handle backward compatibility when unpickling old views"""

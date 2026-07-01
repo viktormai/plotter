@@ -791,6 +791,9 @@ class PlotImage(FigureCanvas):
         self.ax.dataLim.y0 = data_bounds[2]
         self.ax.dataLim.y1 = data_bounds[3]
 
+        # Surface crossings overlay
+        self.plot_surface_crossings()
+
         self.draw()
         self._cache_colorbar_backgrounds()
         self._blit_indicator(self.data_indicator, self.property_colorbar)
@@ -991,6 +994,59 @@ class PlotImage(FigureCanvas):
             self._cache_colorbar_backgrounds()
             self._blit_indicator(self.data_indicator, self.property_colorbar)
 
+    def plot_surface_crossings(self):
+        """Draw vertical lines on the axes for each surface crossing."""
+        cv = self.model.currentView
+        if not cv.showSurfaceCrossings:
+            return
+
+        data = self.model.fetch_surface_crossings()
+        if data is None:
+            data = self.model.fetch_surface_crossings()
+        if data is None or len(data["surface_ids"]) == 0:
+            return
+            
+        surface_ids = data["surface_ids"]
+        u_positions = data["u_positions"]   # distance along u_span from left edge
+        row_indices = data["row_indices"]   # which pixel row (v index)
+
+        if len(surface_ids) == 0:
+            return
+
+        # Convert u_position (distance along u_span) to model x/y coordinate
+        # u_span direction and origin come from the current view
+        basis = cv.basis
+        h_half = cv.width / 2.0
+        v_half = cv.height / 2.0
+
+        xBasis = self.main_window.xBasis
+        yBasis = self.main_window.yBasis
+
+        origin_x = cv.origin[xBasis]
+        origin_y = cv.origin[yBasis]
+
+        h_res = cv.h_res
+        v_res = cv.v_res
+
+        # Map u_position (0..cv.width) → model horizontal coordinate
+        # Map row_index (0..v_res-1) → model vertical coordinate (flipped)
+        # u_positions are distances from the left edge along u_span
+        for u_pos, row in zip(u_positions, row_indices):
+            # horizontal model coord
+            x_model = (origin_x - h_half) + u_pos
+
+            # vertical model coord: row 0 is top, so invert
+            y_frac = 1.0 - (row + 0.5) / v_res
+            y_model = (origin_y - v_half) + y_frac * cv.height
+
+            self.ax.axvline(
+                x=x_model,
+                ymin=(y_frac - 0.5 / v_res),
+                ymax=(y_frac + 0.5 / v_res),
+                color='cyan',
+                linewidth=0.5,
+                alpha=0.7,
+            )
 
 class ColorDialog(QDialog):
 
@@ -1099,6 +1155,14 @@ class ColorDialog(QDialog):
         self.overlapColorButton.setFixedWidth(button_width)
         self.overlapColorButton.setFixedHeight(self.font_metric.height() * 1.5)
         self.overlapColorButton.clicked.connect(main_window.editOverlapColor)
+
+        # Surface Crossings toggle
+        self.surfaceCrossingsCheck = QCheckBox('', self)
+        self.surfaceCrossingsCheck.stateChanged.connect(
+            main_window.toggleSurfaceCrossings)
+
+        formLayout.addRow(HorizontalLine())
+        formLayout.addRow('Show Surface Crossings', self.surfaceCrossingsCheck)
 
         self.colorResetButton = QPushButton("&Reset Colors")
         self.colorResetButton.setCursor(QtCore.Qt.PointingHandCursor)
@@ -1289,6 +1353,7 @@ class ColorDialog(QDialog):
         self.updateDomainTabs()
         self.updateOverlap()
         self.updateOverlapColor()
+        self.updateSurfaceCrossings()
 
     def updateMasking(self):
         masking = self.model.activeView.masking
@@ -1351,6 +1416,12 @@ class ColorDialog(QDialog):
         color = self.model.activeView.overlap_color
         self.overlapColorButton.setStyleSheet("border-radius: 8px;"
                                               "background-color: rgb%s" % (str(color)))
+
+    def updateSurfaceCrossings(self):
+        val = self.model.activeView.showSurfaceCrossings
+        self.surfaceCrossingsCheck.blockSignals(True)
+        self.surfaceCrossingsCheck.setChecked(val)
+        self.surfaceCrossingsCheck.blockSignals(False)
 
     def updateOverlap(self):
         colorby = self.model.activeView.colorby

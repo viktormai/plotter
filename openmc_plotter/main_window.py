@@ -453,6 +453,7 @@ class MainWindow(QMainWindow):
         self.undoAction.setText('&Undo ({})'.format(num_previous_views))
         num_subsequent_views = len(self.model.subsequentViews)
         self.redoAction.setText('&Redo ({})'.format(num_subsequent_views))
+        self.colorDialog.updateSurfaceCrossings()
 
     def updateBasisMenu(self):
         self.xyAction.setChecked(self.model.currentView.basis == 'xy')
@@ -1350,3 +1351,14 @@ class MainWindow(QMainWindow):
         self.materialPropsDialog.show()
         self.materialPropsDialog.raise_()
         self.materialPropsDialog.activateWindow()
+
+    def toggleSurfaceCrossings(self, state, apply=False):
+        self.model.activeView.showSurfaceCrossings = bool(state)
+        self.colorDialog.updateSurfaceCrossings()
+        # Fetch crossing data now (without re-running slice_data)
+        if bool(state):
+            self.model._surface_crossing_data = self.model.fetch_surface_crossings()
+        else:
+            self.model._surface_crossing_data = None
+        # Redraw without re-generating the geometry map
+        self.plotIm.updatePixmap()
