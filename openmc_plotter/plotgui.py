@@ -12,6 +12,7 @@ from matplotlib import lines as mlines
 from matplotlib.colors import SymLogNorm
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 import numpy as np
 import numpy.ma as ma
 
@@ -792,6 +793,7 @@ class PlotImage(FigureCanvas):
         self.ax.dataLim.y1 = data_bounds[3]
 
         # Surface crossings overlay
+        self.model.fetch_surface_crossings()
         self.plot_surface_crossings()
 
         self.draw()
@@ -994,59 +996,62 @@ class PlotImage(FigureCanvas):
             self._cache_colorbar_backgrounds()
             self._blit_indicator(self.data_indicator, self.property_colorbar)
 
+    from matplotlib.collections import LineCollection
+
     def plot_surface_crossings(self):
-        """Draw vertical lines on the axes for each surface crossing."""
         cv = self.model.currentView
         if not cv.showSurfaceCrossings:
             return
 
-        data = self.model.fetch_surface_crossings()
+        data = self.model._surface_crossing_data
         if data is None:
-            data = self.model.fetch_surface_crossings()
-        if data is None or len(data["surface_ids"]) == 0:
-            return
-            
-        surface_ids = data["surface_ids"]
-        u_positions = data["u_positions"]   # distance along u_span from left edge
-        row_indices = data["row_indices"]   # which pixel row (v index)
-
-        if len(surface_ids) == 0:
             return
 
-        # Convert u_position (distance along u_span) to model x/y coordinate
-        # u_span direction and origin come from the current view
-        basis = cv.basis
+        u_positions = data["u_positions"]
+        row_indices = data["row_indices"]
+
+        if len(u_positions) == 0:
+            return
+
+        origin_x = cv.origin[self.main_window.xBasis]
+        origin_y = cv.origin[self.main_window.yBasis]
         h_half = cv.width / 2.0
         v_half = cv.height / 2.0
-
-        xBasis = self.main_window.xBasis
-        yBasis = self.main_window.yBasis
-
-        origin_x = cv.origin[xBasis]
-        origin_y = cv.origin[yBasis]
-
-        h_res = cv.h_res
         v_res = cv.v_res
 
-        # Map u_position (0..cv.width) → model horizontal coordinate
-        # Map row_index (0..v_res-1) → model vertical coordinate (flipped)
-        # u_positions are distances from the left edge along u_span
+        # Group crossings by u_position
+        from collections import defaultdict
+        crossings_by_x = defaultdict(list)
         for u_pos, row in zip(u_positions, row_indices):
-            # horizontal model coord
+            crossings_by_x[u_pos].append(row)
+
+        lines = []
+        for u_pos, rows in crossings_by_x.items():
             x_model = (origin_x - h_half) + u_pos
 
-            # vertical model coord: row 0 is top, so invert
-            y_frac = 1.0 - (row + 0.5) / v_res
-            y_model = (origin_y - v_half) + y_frac * cv.height
+            # Find contiguous row spans so we only draw segments where
+            # crossings actually exist, not the full column height
+            rows_sorted = sorted(set(rows))
+            span_start = rows_sorted[0]
+            prev = rows_sorted[0]
 
-            self.ax.axvline(
-                x=x_model,
-                ymin=(y_frac - 0.5 / v_res),
-                ymax=(y_frac + 0.5 / v_res),
-                color='cyan',
-                linewidth=0.5,
-                alpha=0.7,
-            )
+            for row in rows_sorted[1:]:
+                if row > prev + 1:
+                    # gap in rows — emit the current segment
+                    y_top = (origin_y + v_half) - span_start * (cv.height / v_res)
+                    y_bot = (origin_y + v_half) - (prev + 1) * (cv.height / v_res)
+                    lines.append([(x_model, y_bot), (x_model, y_top)])
+                    span_start = row
+                prev = row
+
+            # emit the final segment
+            y_top = (origin_y + v_half) - span_start * (cv.height / v_res)
+            y_bot = (origin_y + v_half) - (prev + 1) * (cv.height / v_res)
+            lines.append([(x_model, y_bot), (x_model, y_top)])
+
+        if lines:
+            lc = LineCollection(lines, colors='black', linewidths=0.8, alpha=0.8)
+            self.ax.add_collection(lc)
 
 class ColorDialog(QDialog):
 
@@ -1161,9 +1166,6 @@ class ColorDialog(QDialog):
         self.surfaceCrossingsCheck.stateChanged.connect(
             main_window.toggleSurfaceCrossings)
 
-        formLayout.addRow(HorizontalLine())
-        formLayout.addRow('Show Surface Crossings', self.surfaceCrossingsCheck)
-
         self.colorResetButton = QPushButton("&Reset Colors")
         self.colorResetButton.setCursor(QtCore.Qt.PointingHandCursor)
         self.colorResetButton.clicked.connect(main_window.resetColors)
@@ -1189,6 +1191,8 @@ class ColorDialog(QDialog):
         formLayout.addRow('Color Plot By:', self.colorbyBox)
         formLayout.addRow('Universe Level:', self.universeLevelBox)
         formLayout.addRow(self.colorResetButton, None)
+        formLayout.addRow(HorizontalLine())
+        formLayout.addRow('Show Surface Crossings:', self.surfaceCrossingsCheck)
 
         generalLayout = QHBoxLayout()
         innerWidget = QWidget()

@@ -1062,16 +1062,18 @@ class PlotModel:
         return image_data, None, data_min, data_max
 
     def fetch_surface_crossings(self):
-    """Call openmc_compute_surface_crossings and return the data dict,
-    or None if unavailable. Does NOT re-run slice_data."""
-    try:
-        data = openmc.lib.plot.compute_surface_crossings()
-        self._surface_crossing_data = data
-        return data
-    except Exception as e:
-        print(f"Surface crossing fetch failed: {e}")
-        self._surface_crossing_data = None
-        return None
+        cv = self.currentView
+        if not cv.showSurfaceCrossings:  # guard before doing work
+            self._surface_crossing_data = None
+            return None
+        try:
+            data = openmc.lib.plot.compute_surface_crossings()
+            self._surface_crossing_data = data
+            return data
+        except Exception as e:
+            print(f"Surface crossing fetch failed: {e}")
+            self._surface_crossing_data = None
+            return None
 
     @property
     def cell_ids(self):
