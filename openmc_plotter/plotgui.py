@@ -12,7 +12,8 @@ from matplotlib import lines as mlines
 from matplotlib.colors import SymLogNorm
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
+from matplotlib.collections import (LineCollection, PatchCollection)
+from matplotlib.patches import Rectangle
 import numpy as np
 import numpy.ma as ma
 
@@ -1017,41 +1018,27 @@ class PlotImage(FigureCanvas):
         origin_y = cv.origin[self.main_window.yBasis]
         h_half = cv.width / 2.0
         v_half = cv.height / 2.0
-        v_res = cv.v_res
 
-        # Group crossings by u_position
-        from collections import defaultdict
-        crossings_by_x = defaultdict(list)
+        # pixel dimensions in model units
+        pixel_w = cv.width / cv.h_res
+        pixel_h = cv.height / cv.v_res
+
+        patches = []
         for u_pos, row in zip(u_positions, row_indices):
-            crossings_by_x[u_pos].append(row)
-
-        lines = []
-        for u_pos, rows in crossings_by_x.items():
+            # x_model is the exact crossing position — snap it to the
+            # containing pixel's left edge
             x_model = (origin_x - h_half) + u_pos
+            col = int(u_pos / pixel_w)
+            col = max(0, min(col, cv.h_res - 1))
 
-            # Find contiguous row spans so we only draw segments where
-            # crossings actually exist, not the full column height
-            rows_sorted = sorted(set(rows))
-            span_start = rows_sorted[0]
-            prev = rows_sorted[0]
+            x_left  = (origin_x - h_half) + col * pixel_w
+            y_bot   = (origin_y + v_half) - (row + 1) * pixel_h
 
-            for row in rows_sorted[1:]:
-                if row > prev + 1:
-                    # gap in rows — emit the current segment
-                    y_top = (origin_y + v_half) - span_start * (cv.height / v_res)
-                    y_bot = (origin_y + v_half) - (prev + 1) * (cv.height / v_res)
-                    lines.append([(x_model, y_bot), (x_model, y_top)])
-                    span_start = row
-                prev = row
+            patches.append(Rectangle((x_left, y_bot), pixel_w, pixel_h))
 
-            # emit the final segment
-            y_top = (origin_y + v_half) - span_start * (cv.height / v_res)
-            y_bot = (origin_y + v_half) - (prev + 1) * (cv.height / v_res)
-            lines.append([(x_model, y_bot), (x_model, y_top)])
-
-        if lines:
-            lc = LineCollection(lines, colors='black', linewidths=0.8, alpha=0.8)
-            self.ax.add_collection(lc)
+        if patches:
+            pc = PatchCollection(patches, facecolor='black', edgecolor='none', alpha=0.5)
+            self.ax.add_collection(pc)
 
 class ColorDialog(QDialog):
 
