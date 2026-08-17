@@ -27,7 +27,6 @@ ID, NAME, COLOR, COLORLABEL, MASK, HIGHLIGHT = range(6)
 _VOID_REGION = -1
 _NOT_FOUND = -2
 _OVERLAP = -3
-_SURFACE_CROSSING_BASE = -10
 
 _MODEL_PROPERTIES = ('temperature', 'density')
 _PROPERTY_INDICES = {'temperature': 0, 'density': 1}
@@ -137,28 +136,21 @@ def _generate_slice_data(view_params: Dict[str, object]):
     )
 
 
-def _surface_crossing_data(instance_data: np.ndarray):
-    crossing_mask = instance_data <= _SURFACE_CROSSING_BASE
-    surface_crossing_channel = None
-    surface_crossing_map = None
-    surface_crossing_ids = set()
+def _surface_crossing_data(surface_data: np.ndarray):
+    """Extract surface crossings from the surface channel of geom_data.
 
-    if np.any(crossing_mask):
-        surface_crossing_channel = np.where(crossing_mask, instance_data, 0)
-        surface_crossing_map = np.ma.masked_where(
-            ~crossing_mask,
-            _SURFACE_CROSSING_BASE - instance_data,
-        )
-        surface_crossing_ids = set(
-            (_SURFACE_CROSSING_BASE - instance_data[crossing_mask]).astype(int)
-        )
+    The raytrace backend writes the id of a surface crossed within each pixel
+    into the trailing channel of geom_data, leaving _NOT_FOUND where the ray
+    crossed nothing.
+    """
+    crossing_mask = surface_data > 0
+    if not np.any(crossing_mask):
+        return None, set()
 
-    return (
-        crossing_mask,
-        surface_crossing_channel,
-        surface_crossing_map,
-        surface_crossing_ids,
-    )
+    surface_crossing_map = np.ma.masked_where(~crossing_mask, surface_data)
+    surface_crossing_ids = set(surface_data[crossing_mask].astype(int).tolist())
+
+    return surface_crossing_map, surface_crossing_ids
 
 
 class PlotWorker(QObject):
@@ -330,14 +322,11 @@ class PlotModel:
         Whether to plot source sites (default True)
     sourceSites :  Source sites to plot
         Set of source locations to plot
-    surface_crossing_channel : NumPy int array or None
-        Raytraced surface-crossing sentinel values isolated from the instance
-        channel of geom_data; non-crossing pixels are zeroed out
     surface_crossing_map : NumPy masked array or None
-        Per-pixel decoded surface IDs for raytraced crossings, with
-        non-crossing pixels masked out
+        Per-pixel surface IDs for raytraced crossings, with non-crossing
+        pixels masked out
     surface_crossing_ids : set[int]
-        Surface IDs decoded from the isolated surface-crossing channel
+        Surface IDs appearing in the surface channel of geom_data
     defaultView : PlotView
         Default settings for given geometry
     currentView : PlotView
@@ -362,7 +351,6 @@ class PlotModel:
         self.geom_data = None
         self.property_data = None
         self.map_view_params = None
-        self.surface_crossing_channel = None
         self.surface_crossing_map = None
         self.surface_crossing_ids = set()
 
@@ -616,18 +604,15 @@ class PlotModel:
                 if dom.highlight:
                     image[self.ids == int(id)] = cv.highlightBackground
 
-        self.surface_crossing_channel = None
+        # Surface crossings are carried in their own channel and never recolor
+        # the raster, so a raytraced image is colored identically to a
+        # point-sampled one. They are drawn as contours and labels instead, by
+        # PlotImage.add_surface_crossing_contours when showSurfaceIDs is on.
         self.surface_crossing_map = None
         self.surface_crossing_ids = set()
-        crossing_mask = np.zeros(self.instances.shape, dtype=bool)
-        if view.useRaytracedPlots:
-            (crossing_mask,
-             self.surface_crossing_channel,
-             self.surface_crossing_map,
-             self.surface_crossing_ids) = _surface_crossing_data(self.instances)
-
-        # Keep sampled crossing pixels visible in the raster image itself.
-        image[crossing_mask] = (0, 0, 0)
+        if self.map_view_params.get("use_raytraced_plots", True):
+            (self.surface_crossing_map,
+             self.surface_crossing_ids) = _surface_crossing_data(self.surface_ids)
 
         # set model image
         self.image = image
@@ -1094,9 +1079,12 @@ class PlotModel:
                 selected_scores.append(idx)
         data = _do_op(data[np.array(selected_scores)], tally_value)
 
-        # Extract filter bins from geom_data (computed during slice_data call)
-        # geom_data has shape (v_res, h_res, 4) when filter was included
-        if self.geom_data.shape[2] < 4:
+        # Extract filter bins from geom_data (computed during slice_data call).
+        # Filter bins are channel 3 in both backends when a filter was
+        # requested. Checking the shape is not enough to know one was: a
+        # raytraced plot with no filter is also 4 channels, and its channel 3
+        # holds surface ids.
+        if self.map_view_params.get("filter_id") is None:
             raise RuntimeError(
                 "Filter bins not available. Ensure slice_data was called with "
                 "the appropriate filter for MeshMaterialFilter tallies."
@@ -1125,6 +1113,14 @@ class PlotModel:
     @property
     def mat_ids(self):
         return self.geom_data[:, :, 2]
+
+    @property
+    def surface_ids(self):
+        """Id of a surface crossed in each pixel, or _NOT_FOUND where none.
+
+        The trailing channel of geom_data, present only for raytraced plots.
+        """
+        return self.geom_data[:, :, -1]
 
 
 class ViewParam:

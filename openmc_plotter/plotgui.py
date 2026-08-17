@@ -18,7 +18,7 @@ import numpy.ma as ma
 from .plot_colors import rgb_normalize, invert_rgb
 from .plotmodel import DomainDelegate, PlotModel
 from .plotmodel import (_NOT_FOUND, _VOID_REGION, _OVERLAP,
-                         _MODEL_PROPERTIES, _SURFACE_CROSSING_BASE)
+                         _MODEL_PROPERTIES)
 from .scientific_spin_box import ScientificDoubleSpinBox
 from .custom_widgets import HorizontalLine
 
@@ -910,7 +910,7 @@ class PlotImage(FigureCanvas):
                 origin='upper',
                 colors=[contour_color],
                 linestyles='solid',
-                linewidths=2.5,
+                linewidths=1.5,
                 levels=levels,
                 extent=data_bounds,
                 algorithm='serial',
